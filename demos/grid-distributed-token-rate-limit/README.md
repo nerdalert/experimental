@@ -207,35 +207,35 @@ helm version
 cargo --version
 ```
 
-## Run with prebuilt images
+## Check out the stacked upstream work
 
-Clone the exact Grid demo branch. Its Forge topology already references the
-published images listed below with `IfNotPresent` pull policy.
+Use the open upstream PRs rather than contributor branches or personal registry
+defaults:
 
 ```bash
-git clone --branch poc/distributed-token-rate-limit-demo https://github.com/nerdalert/grid.git grid-token-rate-limit
-cd grid-token-rate-limit
-cargo run -p forge -- --config tests/e2e/topologies/grid-token-rate-limit/forge.yaml up
+git clone https://github.com/praxis-proxy/grid.git grid
+git -C grid fetch origin \
+  pull/65/head:refs/remotes/origin/pr-65 \
+  pull/84/head:refs/remotes/origin/pr-84
+git -C grid switch --detach origin/pr-84
+
+git clone https://github.com/praxis-proxy/ai.git ai
+git -C ai fetch origin \
+  pull/731/head:refs/remotes/origin/pr-731 \
+  pull/790/head:refs/remotes/origin/pr-790
+git -C ai switch --detach origin/pr-790
+
+git clone https://github.com/praxis-proxy/praxis.git praxis
+git -C praxis fetch origin pull/1011/head:refs/remotes/origin/pr-1011
+git -C praxis switch --detach origin/pr-1011
 ```
 
-The deployment uses:
+Builds from these checkouts are local validation artifacts. Do not push them
+to a registry until the cold deployment and runtime proof pass.
 
-```text
-ghcr.io/nerdalert/praxis-ai:token-rate-limit-demo-20260818
-ghcr.io/nerdalert/grid-operator:token-rate-limit-demo-20260818
-ghcr.io/nerdalert/grid-overlay-sync:token-rate-limit-demo-20260818
-ghcr.io/nerdalert/praxis-tracing:token-rate-limit-demo-20260818
-ghcr.io/neuralmagic/vllm-vcr:vllm0.23
-```
-
-Immutable digests for the demo-owned images:
-
-| Image | Digest |
-| --- | --- |
-| `praxis-ai` | `sha256:b4380172f36339a3eef9c1130853ace895c3c47a5674545e318990bd34771fe7` |
-| `grid-operator` | `sha256:10095d53bfdfb12e8798ac20b9caa80f4b3fa61842695763bbe2f60ddb164897` |
-| `grid-overlay-sync` | `sha256:a8ded0be9de4e224c8efeb6ff593e2148afe5956c3b979f0c9a8101f7da162cc` |
-| `praxis-tracing` | `sha256:9d78af9b04c49666b5867681ac60bd09bfda76d5d2b1b395dda3eb72269d8eb3` |
+The Grid topology contains two consumers, three VCR-backed providers, and one
+private Valkey service. It does not deploy the tracing stack; run the tracing UI
+as a separate optional application.
 
 Inspect readiness and the three-candidate overlays:
 
@@ -249,47 +249,132 @@ The topology contains the consumer credentials and test quota configuration.
 They are demonstration fixtures only and must not be reused in another
 environment.
 
-## Build the images from source
+## Build and deploy on Kind
 
-Use the exact source branches so the authenticated-principal, quota, routing,
-and UI contracts remain aligned:
-
-```bash
-git clone --branch poc/authenticated-principal-metadata https://github.com/nerdalert/praxis.git praxis
-git clone --branch poc/distributed-token-rate-limit-demo https://github.com/nerdalert/ai.git ai
-git clone --branch poc/distributed-token-rate-limit-demo https://github.com/nerdalert/grid.git grid
-git clone --branch feat/distributed-token-rate-limit-demo https://github.com/nerdalert/praxis-tracing.git praxis-tracing
-```
-
-Build the images with the names expected by the Forge topology:
+Build the combined AI gateway, Grid operator, and overlay-sync images from the
+checked-out PR sources. Keep the image names local and use `Never` pull policy:
 
 <!-- markdownlint-disable MD013 -->
 ```bash
-docker build -f ai/Containerfile -t ghcr.io/nerdalert/praxis-ai:token-rate-limit-demo-20260818 ai
-docker build -f grid/deploy/operator/Containerfile -t ghcr.io/nerdalert/grid-operator:token-rate-limit-demo-20260818 grid
-docker build -f grid/overlay-sync/Containerfile -t ghcr.io/nerdalert/grid-overlay-sync:token-rate-limit-demo-20260818 grid
-docker build -f praxis-tracing/routing-observability-ui/Containerfile -t ghcr.io/nerdalert/praxis-tracing:token-rate-limit-demo-20260818 praxis-tracing/routing-observability-ui
+export GATEWAY_IMAGE=praxis-ai:distributed-token-quota-local
+export OPERATOR_IMAGE=grid-operator:distributed-token-quota-local
+export OVERLAY_SYNC_IMAGE=grid-overlay-sync:distributed-token-quota-local
+export GRID_XTASK_GATEWAY_IMAGE="$GATEWAY_IMAGE"
+export GRID_XTASK_OPERATOR_IMAGE="$OPERATOR_IMAGE"
+export GRID_XTASK_OVERLAY_SYNC_IMAGE="$OVERLAY_SYNC_IMAGE"
+export GRID_XTASK_IMAGE_PULL_POLICY=Never
+
+docker build -f ai/Containerfile -t "$GATEWAY_IMAGE" ai
+docker build -f grid/deploy/operator/Containerfile -t "$OPERATOR_IMAGE" grid
+docker build -f grid/overlay-sync/Containerfile -t "$OVERLAY_SYNC_IMAGE" grid
 ```
 <!-- markdownlint-enable MD013 -->
 
-For a completely local run, create the clusters first and load the locally built
-images before asking Forge to apply the stacks:
+### Option: pre-built images
+
+You may use pre-built images instead of building locally. Supply the exact
+references you intend to validate; do not rely on the organization defaults to
+contain the unmerged quota changes:
+
+```bash
+export GRID_XTASK_GATEWAY_IMAGE=registry.example/praxis-ai:quota-validation
+export GRID_XTASK_OPERATOR_IMAGE=registry.example/grid-operator:quota-validation
+export GRID_XTASK_OVERLAY_SYNC_IMAGE=registry.example/grid-overlay-sync:quota-validation
+export GRID_XTASK_IMAGE_PULL_POLICY=IfNotPresent
+```
+
+With `IfNotPresent`, skip the `kind load docker-image` commands below. Forge
+will render those explicit references and Kubernetes will pull them. Continue
+with the same materialization, cluster creation, and phased stack-application
+commands. Record the image digests before treating the run as qualifying.
+
+Forge does not consume `GRID_XTASK_*` variables directly. Materialize a
+resolved Forge file first; this replaces the image properties in every cluster
+while preserving the checked-in topology. The command fails if local pull mode
+is selected without all three local Grid images:
 
 <!-- markdownlint-disable MD013 -->
 ```bash
 CONFIG=tests/e2e/topologies/grid-token-rate-limit/forge.yaml
+RESOLVED_CONFIG=tests/e2e/topologies/grid-token-rate-limit/forge.resolved.yaml
+cargo run -p xtask -- env materialize-forge-config \
+  --forge-config "$CONFIG" \
+  --output "$RESOLVED_CONFIG"
+
 for cluster in west central east; do
-  cargo run -p forge -- --config "$CONFIG" cluster create "$cluster"
-  cargo run -p forge -- --config "$CONFIG" cluster load-image "$cluster" ghcr.io/nerdalert/praxis-ai:token-rate-limit-demo-20260818
-  cargo run -p forge -- --config "$CONFIG" cluster load-image "$cluster" ghcr.io/nerdalert/grid-operator:token-rate-limit-demo-20260818
-  cargo run -p forge -- --config "$CONFIG" cluster load-image "$cluster" ghcr.io/nerdalert/grid-overlay-sync:token-rate-limit-demo-20260818
-  cargo run -p forge -- --config "$CONFIG" cluster load-image "$cluster" ghcr.io/nerdalert/praxis-tracing:token-rate-limit-demo-20260818
+  cargo run -p forge -- --config "$RESOLVED_CONFIG" cluster create "$cluster"
+  kind load docker-image "$GATEWAY_IMAGE" --name "grid-token-rate-limit-$cluster"
+  kind load docker-image "$OPERATOR_IMAGE" --name "grid-token-rate-limit-$cluster"
+  kind load docker-image "$OVERLAY_SYNC_IMAGE" --name "grid-token-rate-limit-$cluster"
 done
-cargo run -p forge -- --config "$CONFIG" up
+cargo run -p forge -- --config "$RESOLVED_CONFIG" up
+
+# `forge up` creates the Docker network and Kind clusters. Apply the
+# Kubernetes stacks explicitly. The operator bootstrap is two-pass: the first
+# pass captures each local SWIM LoadBalancer address; the second pass can then
+# resolve the other two clusters' captured addresses.
+for cluster in west central east; do
+  cargo run -p forge -- --config "$RESOLVED_CONFIG" \
+    --state-dir .forge stack apply "$cluster" "${cluster}-operator-base"
+done
+for cluster in west central east; do
+  cargo run -p forge -- --config "$RESOLVED_CONFIG" \
+    --state-dir .forge stack apply "$cluster" "${cluster}-operator-seed"
+done
+
+# Apply the remaining stacks in dependency order after the operator mesh is
+# seeded. Keeping these phases explicit avoids applying a consumer before its
+# provider, trust, and overlay dependencies are ready.
+for cluster in west central east; do
+  cargo run -p forge -- --config "$RESOLVED_CONFIG" \
+    --state-dir .forge stack apply "$cluster" vcr-backend
+done
+for cluster in west central east; do
+  cargo run -p forge -- --config "$RESOLVED_CONFIG" \
+    --state-dir .forge stack apply "$cluster" provider-boundary
+done
+for cluster in west central east; do
+  cargo run -p forge -- --config "$RESOLVED_CONFIG" \
+    --state-dir .forge stack apply "$cluster" provider-gateway
+done
+for cluster in west central east; do
+  cargo run -p forge -- --config "$RESOLVED_CONFIG" \
+    --state-dir .forge stack apply "$cluster" "${cluster}-trust-bootstrap"
+done
+for cluster in west central east; do
+  cargo run -p forge -- --config "$RESOLVED_CONFIG" \
+    --state-dir .forge stack apply "$cluster" "${cluster}-site"
+done
+for cluster in west central east; do
+  cargo run -p forge -- --config "$RESOLVED_CONFIG" \
+    --state-dir .forge stack apply "$cluster" site-trust-bootstrap
+done
+cargo run -p forge -- --config "$RESOLVED_CONFIG" \
+  --state-dir .forge stack apply west valkey
+for stack in consumer-west-a consumer-west-b; do
+  cargo run -p forge -- --config "$RESOLVED_CONFIG" \
+    --state-dir .forge stack apply west "$stack"
+done
 ```
 <!-- markdownlint-enable MD013 -->
 
-Using the published images is the simpler cold-start path.
+The resolved file is generated output and must not be committed. Verify the
+actual rendered image values before deployment:
+
+```bash
+grep -nE 'gatewayImage|operatorImage|overlaySyncImage|imagePullPolicy' \
+  "$RESOLVED_CONFIG"
+cargo run -p forge -- --config "$RESOLVED_CONFIG" config validate
+```
+
+After the pods start, verify their image references and immutable image IDs:
+
+```bash
+for context in west central east; do
+  kubectl --context "kind-grid-token-rate-limit-$context" -n grid-system \
+    get pods -o custom-columns='NAME:.metadata.name,IMAGE:.spec.containers[*].image,IMAGE_ID:.status.containerStatuses[*].imageID'
+done
+```
 
 ## Validate the request flow
 
@@ -319,29 +404,19 @@ consumer must return `429`, include limit/remaining/reset information, and omit
 provider attribution. Waiting for entries to age out restores capacity
 incrementally; this is sliding-window recovery, not a global reset.
 
-## Tracing UI
+## Optional tracing UI
 
-The optional observability stack enables the token-rate-limit profile only when
-`TRACING_UI_TOKEN_RATE_LIMIT=true`. It presents one row per request, distinguishes
-Consumer A from Consumer B, shows the selected provider for admitted requests,
-and leaves the provider path empty for requests denied before routing.
-
-Open the UI and Jaeger with two additional port-forwards:
-
-```bash
-kubectl --context kind-grid-token-rate-limit-west -n praxis-tracing port-forward svc/praxis-tracing-ui 3000:8080
-kubectl --context kind-grid-token-rate-limit-west -n praxis-tracing port-forward svc/jaeger-query 16686:16686
-```
-
-Then visit `http://127.0.0.1:3000` and `http://127.0.0.1:16686`.
-
-The UI is a demonstration surface. The quota contract is enforced by Praxis AI
-and Valkey, independently of whether the UI is deployed.
+The Grid quota topology does not include Collector, Jaeger, or a tracing UI.
+Run the modular tracing application separately and enable its distributed-quota
+profile with `TRACING_UI_TOKEN_RATE_LIMIT=true`, both consumer URLs, and a
+server-side password file. The UI is a presentation surface; quota evidence
+must still come from HTTP responses, Valkey, provider counts, and Grid overlay
+inspection.
 
 ## Teardown
 
 ```bash
-cargo run -p forge -- --config tests/e2e/topologies/grid-token-rate-limit/forge.yaml down
+cargo run -p forge -- --config "$RESOLVED_CONFIG" down
 ```
 
 Verify cleanup:
@@ -370,7 +445,8 @@ identity metadata rather than by Basic Auth-specific fields.
 - [Provider selection in Praxis AI](https://github.com/praxis-proxy/ai/pull/731)
 - [Provider selection contract in Grid](https://github.com/praxis-proxy/grid/pull/65)
 - [Basic authentication in Praxis](https://github.com/praxis-proxy/praxis/pull/824)
-- [Authenticated-principal source branch](https://github.com/nerdalert/praxis/tree/poc/authenticated-principal-metadata)
-- [Distributed quota source branch](https://github.com/nerdalert/ai/tree/poc/distributed-token-rate-limit-demo)
-- [Grid topology source branch](https://github.com/nerdalert/grid/tree/poc/distributed-token-rate-limit-demo)
-- [Tracing UI source branch](https://github.com/nerdalert/praxis-tracing/tree/feat/distributed-token-rate-limit-demo)
+- [Authenticated-principal implementation](https://github.com/praxis-proxy/praxis/pull/1011)
+- [Distributed quota implementation](https://github.com/praxis-proxy/ai/pull/790)
+- [Grid quota topology](https://github.com/praxis-proxy/grid/pull/84)
+- [Provider-selection foundation](https://github.com/praxis-proxy/ai/pull/731)
+- [Grid selection contract](https://github.com/praxis-proxy/grid/pull/65)
