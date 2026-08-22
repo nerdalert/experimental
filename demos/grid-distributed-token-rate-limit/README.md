@@ -214,15 +214,11 @@ defaults:
 
 ```bash
 git clone https://github.com/praxis-proxy/grid.git grid
-git -C grid fetch origin \
-  pull/65/head:refs/remotes/origin/pr-65 \
-  pull/84/head:refs/remotes/origin/pr-84
+git -C grid fetch origin pull/65/head:refs/remotes/origin/pr-65 pull/84/head:refs/remotes/origin/pr-84
 git -C grid switch --detach origin/pr-84
 
 git clone https://github.com/praxis-proxy/ai.git ai
-git -C ai fetch origin \
-  pull/731/head:refs/remotes/origin/pr-731 \
-  pull/790/head:refs/remotes/origin/pr-790
+git -C ai fetch origin pull/731/head:refs/remotes/origin/pr-731 pull/790/head:refs/remotes/origin/pr-790
 git -C ai switch --detach origin/pr-790
 
 git clone https://github.com/praxis-proxy/praxis.git praxis
@@ -297,9 +293,7 @@ is selected without all three local Grid images:
 ```bash
 CONFIG=tests/e2e/topologies/grid-token-rate-limit/forge.yaml
 RESOLVED_CONFIG=tests/e2e/topologies/grid-token-rate-limit/forge.resolved.yaml
-cargo run -p xtask -- env materialize-forge-config \
-  --forge-config "$CONFIG" \
-  --output "$RESOLVED_CONFIG"
+cargo run -p xtask -- env materialize-forge-config --forge-config "$CONFIG" --output "$RESOLVED_CONFIG"
 
 for cluster in west central east; do
   cargo run -p forge -- --config "$RESOLVED_CONFIG" cluster create "$cluster"
@@ -314,46 +308,36 @@ cargo run -p forge -- --config "$RESOLVED_CONFIG" up
 # pass captures each local SWIM LoadBalancer address; the second pass can then
 # resolve the other two clusters' captured addresses.
 for cluster in west central east; do
-  cargo run -p forge -- --config "$RESOLVED_CONFIG" \
-    --state-dir .forge stack apply "$cluster" "${cluster}-operator-base"
+  cargo run -p forge -- --config "$RESOLVED_CONFIG" --state-dir .forge stack apply "$cluster" "${cluster}-operator-base"
 done
 for cluster in west central east; do
-  cargo run -p forge -- --config "$RESOLVED_CONFIG" \
-    --state-dir .forge stack apply "$cluster" "${cluster}-operator-seed"
+  cargo run -p forge -- --config "$RESOLVED_CONFIG" --state-dir .forge stack apply "$cluster" "${cluster}-operator-seed"
 done
 
 # Apply the remaining stacks in dependency order after the operator mesh is
 # seeded. Keeping these phases explicit avoids applying a consumer before its
 # provider, trust, and overlay dependencies are ready.
 for cluster in west central east; do
-  cargo run -p forge -- --config "$RESOLVED_CONFIG" \
-    --state-dir .forge stack apply "$cluster" vcr-backend
+  cargo run -p forge -- --config "$RESOLVED_CONFIG" --state-dir .forge stack apply "$cluster" vcr-backend
 done
 for cluster in west central east; do
-  cargo run -p forge -- --config "$RESOLVED_CONFIG" \
-    --state-dir .forge stack apply "$cluster" provider-boundary
+  cargo run -p forge -- --config "$RESOLVED_CONFIG" --state-dir .forge stack apply "$cluster" provider-boundary
 done
 for cluster in west central east; do
-  cargo run -p forge -- --config "$RESOLVED_CONFIG" \
-    --state-dir .forge stack apply "$cluster" provider-gateway
+  cargo run -p forge -- --config "$RESOLVED_CONFIG" --state-dir .forge stack apply "$cluster" provider-gateway
 done
 for cluster in west central east; do
-  cargo run -p forge -- --config "$RESOLVED_CONFIG" \
-    --state-dir .forge stack apply "$cluster" "${cluster}-trust-bootstrap"
+  cargo run -p forge -- --config "$RESOLVED_CONFIG" --state-dir .forge stack apply "$cluster" "${cluster}-trust-bootstrap"
 done
 for cluster in west central east; do
-  cargo run -p forge -- --config "$RESOLVED_CONFIG" \
-    --state-dir .forge stack apply "$cluster" "${cluster}-site"
+  cargo run -p forge -- --config "$RESOLVED_CONFIG" --state-dir .forge stack apply "$cluster" "${cluster}-site"
 done
 for cluster in west central east; do
-  cargo run -p forge -- --config "$RESOLVED_CONFIG" \
-    --state-dir .forge stack apply "$cluster" site-trust-bootstrap
+  cargo run -p forge -- --config "$RESOLVED_CONFIG" --state-dir .forge stack apply "$cluster" site-trust-bootstrap
 done
-cargo run -p forge -- --config "$RESOLVED_CONFIG" \
-  --state-dir .forge stack apply west valkey
+cargo run -p forge -- --config "$RESOLVED_CONFIG" --state-dir .forge stack apply west valkey
 for stack in consumer-west-a consumer-west-b; do
-  cargo run -p forge -- --config "$RESOLVED_CONFIG" \
-    --state-dir .forge stack apply west "$stack"
+  cargo run -p forge -- --config "$RESOLVED_CONFIG" --state-dir .forge stack apply west "$stack"
 done
 ```
 <!-- markdownlint-enable MD013 -->
@@ -362,8 +346,7 @@ The resolved file is generated output and must not be committed. Verify the
 actual rendered image values before deployment:
 
 ```bash
-grep -nE 'gatewayImage|operatorImage|overlaySyncImage|imagePullPolicy' \
-  "$RESOLVED_CONFIG"
+grep -nE 'gatewayImage|operatorImage|overlaySyncImage|imagePullPolicy' "$RESOLVED_CONFIG"
 cargo run -p forge -- --config "$RESOLVED_CONFIG" config validate
 ```
 
@@ -390,10 +373,9 @@ the west consumer fixture in the checked-out topology:
 
 ```bash
 for port in 18080 18081 18080 18081; do
-  curl -i -u 'alice:alice-secret' \
-    -H 'Content-Type: application/json' \
-    -H 'X-Model: Qwen/Qwen3-0.6B' \
-    -X POST "http://127.0.0.1:${port}/v1/chat/completions" \
+  curl -i -u 'alice:alice-secret' -H 'Content-Type: application/json' \
+    -H 'X-Model: Qwen/Qwen3-0.6B' -X POST \
+    "http://127.0.0.1:${port}/v1/chat/completions" \
     -d '{"model":"Qwen/Qwen3-0.6B","messages":[{"role":"user","content":"Explain quorum."}],"max_tokens":15}'
 done
 ```
