@@ -21,7 +21,7 @@ selection contract.
 > development branches rather than coordinated releases.
 
 <!-- markdownlint-disable-next-line MD034 -->
-https://github.com/user-attachments/assets/7d72e292-8183-4a25-aadb-995c9578efb4
+https://github.com/user-attachments/assets/75bb9880-236d-4712-9e18-712a60818839
 
 ## What this demonstrates
 
@@ -358,6 +358,170 @@ for context in west central east; do
     get pods -o custom-columns='NAME:.metadata.name,IMAGE:.spec.containers[*].image,IMAGE_ID:.status.containerStatuses[*].imageID'
 done
 ```
+
+## Install on vanilla Kubernetes or OpenShift
+
+The Forge file above is a Kind/multi-cluster development harness. For a
+normal Kubernetes or OpenShift installation, deploy the same logical topology
+with ordinary Kubernetes resources and Helm. This variant keeps the two
+consumer gateways and shared Valkey in one namespace, and represents west,
+central, and east as three independently addressable provider gateways and
+backends in the same cluster. The three provider names are logical demo sites;
+they are not three physical Kubernetes clusters.
+
+Use a dedicated namespace and a registry that every node can pull from. Do not
+use `imagePullPolicy: Never` on a remote cluster and do not rely on images that
+exist only in a developer's Docker daemon.
+
+```bash
+export NAMESPACE=grid-token-rate-limit
+export GRID_REPO=/path/to/grid
+kubectl create namespace "$NAMESPACE"
+
+# Install synchronized Grid CRDs and the operator. The CRDs and chart must
+# come from the same Grid revision; older release CRDs do not contain the
+# selectionPolicy.mode fields used by this demo. Pin the chart source and image digest in
+# the deployment record used for the environment.
+kubectl apply -f "$GRID_REPO/deploy/crds/"
+helm upgrade --install grid-operator "$GRID_REPO/charts/grid-operator" \
+  --namespace "$NAMESPACE" \
+  --set image.repository=ghcr.io/nerdalert/grid-operator \
+  --set image.tag=token-rate-limit-demo-20260818 \
+  --set image.pullPolicy=IfNotPresent \
+  --set swim.siteName=rhoai \
+  --set swim.service.enabled=false \
+  --set gateway.serviceName=provider-gateway-west \
+  --set gateway.port=8443
+```
+
+Create a private, authenticated Valkey Service and Deployment from the
+versioned `resources/common/valkey.yaml` resource, changing only its namespace
+and Secret reference. Mount the same Secret-backed URL into both consumer
+Deployments as `TOKEN_RATE_LIMIT_VALKEY_URL`; never put the password in a
+ConfigMap, command history, or the browser environment.
+
+Deploy the three VCR-backed workloads and three provider gateway Services as
+separate named workloads:
+
+```text
+provider-gateway-west   -> vcr-inference-west
+provider-gateway-central -> vcr-inference-central
+provider-gateway-east   -> vcr-inference-east
+```
+
+Deploy `consumer-gateway-a` and `consumer-gateway-b` as separate Deployments
+and Services. Both must use the same token-rate-limit policy, Valkey namespace,
+Basic Auth Secret, and accepted Grid overlay. Their configurations should use
+the provider Service DNS names rather than Forge captures, for example
+`provider-gateway-west.<namespace>.svc.cluster.local:8443`.
+
+The single-cluster Grid resources can be installed with the `grid-site` chart.
+Use one GridNetwork with two gateway references and three named
+InferenceProviders:
+
+```yaml
+gridNetwork:
+  name: grid-token-rate-limit
+  gridId: grid-token-rate-limit-rhoai-v1
+  region: rhoai
+  zone: cluster-local
+  routingPolicy: scoreFirst
+  scoringPolicy:
+    strategy: noMetrics
+  gatewayRefs:
+    - name: consumer-gateway-a
+      namespace: grid-token-rate-limit
+      localSiteName: consumer-a
+    - name: consumer-gateway-b
+      namespace: grid-token-rate-limit
+      localSiteName: consumer-b
+
+gridSite:
+  name: rhoai
+  region: rhoai
+  zone: cluster-local
+  providerSiteLabel: rhoai
+
+inferenceProviders:
+  - name: provider-west
+    gridNetworkRef: grid-token-rate-limit
+    providerKind: vllm-vcr
+    backendKind: local
+    endpoint: http://vcr-inference-west.<namespace>.svc.cluster.local:8000
+    models:
+      - name: Qwen/Qwen3-0.6B
+  - name: provider-central
+    gridNetworkRef: grid-token-rate-limit
+    providerKind: vllm-vcr
+    backendKind: local
+    endpoint: http://vcr-inference-central.<namespace>.svc.cluster.local:8000
+    models:
+      - name: Qwen/Qwen3-0.6B
+  - name: provider-east
+    gridNetworkRef: grid-token-rate-limit
+    providerKind: vllm-vcr
+    backendKind: local
+    endpoint: http://vcr-inference-east.<namespace>.svc.cluster.local:8000
+    models:
+      - name: Qwen/Qwen3-0.6B
+```
+
+Replace `<namespace>` before applying the file. The provider gateways must
+have labels and authorization policies that match the consumer's provider-hop
+configuration. In production, use an issued mTLS Secret whose certificate SANs
+match the provider Service DNS names, or use the cluster's approved service
+identity mechanism. Do not copy the demo credentials or self-signed trust
+material into production.
+
+The Grid `gatewayRefs.localSiteName` values (`consumer-a` and `consumer-b`)
+are the overlay scopes consumed by overlay-sync. The provider `siteSelector`
+values must instead match the active GridSite label (`rhoai` in a single-cluster
+deployment). Keep those identities distinct. Provider route tables must use
+the stable candidate IDs emitted by the accepted overlay, not only the
+InferenceProvider resource names.
+
+Do not deploy three Grid operators in one namespace to simulate three sites.
+GridNetwork and InferenceProvider resources are cluster-scoped; multiple
+operators watching the same resources duplicate provider records. A real
+multi-site deployment needs separate supported operator scopes and stable SWIM
+addresses. For the single-cluster topology, use one operator, one active
+GridSite, and three independently addressable provider gateways.
+
+Install the observability resources from
+`resources/tracing/observability.yaml` in a dedicated `praxis-tracing`
+namespace, changing the UI's consumer URLs to the two in-cluster Services and
+setting `TRACING_UI_TOKEN_RATE_LIMIT=true`. Expose the UI and Jaeger only
+through the platform's authenticated Ingress/Route or a temporary
+`kubectl port-forward`; do not expose Valkey or provider Services publicly.
+
+Before traffic, verify all of the following from the cluster, not from UI
+fixtures:
+
+```bash
+kubectl -n "$NAMESPACE" get deploy,pods,svc
+kubectl -n "$NAMESPACE" get gridnetwork,gridsites,inferenceproviders
+kubectl -n "$NAMESPACE" get configmap -l app.kubernetes.io/part-of=grid
+kubectl -n praxis-tracing get deploy,pods,svc
+kubectl -n "$NAMESPACE" port-forward svc/consumer-gateway-a 18080:8080
+kubectl -n "$NAMESPACE" port-forward svc/consumer-gateway-b 18081:8080
+```
+
+Run the request sequence in [Validate the request flow](#validate-the-request-flow),
+using the two forwarded consumer Services. Record the accepted overlay digest,
+the serving revision from both consumers, image digests, provider/VCR counts,
+and the observability endpoint. A successful Helm install or Ready condition is
+not, by itself, proof that the overlay was accepted or that denied requests
+avoided provider contact.
+
+For OpenShift, use `oc` in place of `kubectl`, apply the same namespace-scoped
+resources, and expose only the tracing UI and Jaeger through authenticated
+Routes. Remove fixed `runAsUser`/`runAsGroup` values from inherited demo
+observability manifests so the restricted SCC can assign the namespace UID.
+Review SecurityContextConstraints and NetworkPolicy behavior before using the
+demo VCR image; the published image is a development fixture and is not a
+production inference server. A complete RHOAI installation record, including
+Helm commands and diagnosed failed variants, is maintained in the
+`rhoai-install/README.md` alongside the sprint workspace.
 
 ## Validate the request flow
 

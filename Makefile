@@ -3,7 +3,7 @@
 # -------------------------------------------------------------------
 
 CONTAINER_ENGINE ?= $(shell command -v podman 2>/dev/null || command -v docker 2>/dev/null)
-NIGHTLY          ?= nightly
+NIGHTLY          ?= nightly-2026-03-28
 V                ?=
 
 # Crates verified by publish-dry-run, in dependency order.
@@ -228,7 +228,7 @@ help:
 	@echo "  mutants          mutation testing (cargo-mutants)"
 	@echo ""
 	@echo "Quality:"
-	@echo "  lint             clippy + rustfmt check + machete + lint-extra"
+	@echo "  lint             clippy + rustfmt check + machete"
 	@echo "  lint-extra       typos + taplo + shellcheck + actionlint"
 	@echo "  fmt              format with nightly rustfmt"
 	@echo "  doc              build docs with warnings denied"

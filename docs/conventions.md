@@ -627,7 +627,7 @@ its code. The gates:
   `Cargo.toml`/`Cargo.lock`, tests, docs, examples, and
   benchmarks do not count toward the limit. Split larger
   changes into a stack of reviewable PRs. Override label:
-  `skip/pr-conventions` (maintainers only).
+  `skip/pr-conventions` (reviewers only).
 - **Description**: every PR must explain what it does and
   why.
 - **Commit format**: subjects follow the conventional
@@ -644,4 +644,4 @@ its code. The gates:
   submission, regardless of what tooling they used to produce it.
 - **Proposals**: proposal files must satisfy the
   frontmatter and lifecycle rules in
-  [proposals.md](proposals.md).
+  the [central proposal process](https://github.com/praxis-proxy/enhancements).
