@@ -318,6 +318,68 @@ stateDiagram-v2
 
 The exact percentages are policy results, not hard-coded product constants.
 
+### Configuration
+
+Bursting is not a dedicated switch — it emerges from composing existing
+policies. Using the `grid-site` chart values:
+
+```yaml
+gridNetwork:
+  name: cloud-burst
+  routingPolicy: geographyFirst    # prefer the local tier before overflow
+  scoringPolicy:
+    strategy: queueDepth           # admission derives from live queue pressure
+  selectionPolicy:
+    mode: weightedRandom           # distribute within the active group by weight
+  placementPolicy:
+    strategy: static               # fixed per-provider capacityWeight
+
+inferenceProviders:
+  # Preferred local pool (group 0), weighted 60/40, admission-gated by queue depth.
+  - name: local-a
+    gridNetworkRef: cloud-burst
+    providerKind: gateway
+    backendKind: local_model
+    endpoint: http://static-sim-a.grid-system.svc.cluster.local:8000
+    capacityWeight: 60
+    metricsConfig:
+      path: /metrics
+      signalNames:
+        queueDepth: vllm:num_requests_waiting
+  - name: local-b
+    gridNetworkRef: cloud-burst
+    providerKind: gateway
+    backendKind: local_model
+    endpoint: http://static-sim-b.grid-system.svc.cluster.local:8000
+    capacityWeight: 40
+    metricsConfig:
+      path: /metrics
+      signalNames:
+        queueDepth: vllm:num_requests_waiting
+  # Overflow tier (group 1). A different backend class, so Grid keeps it in a
+  # separate fallback group — dormant until the local pool cannot take new work.
+  - name: cloud-openai
+    gridNetworkRef: cloud-burst
+    providerKind: gateway
+    backendKind: api_provider
+    endpoint: https://api.openai.com
+    capacityWeight: 100
+```
+
+How the three stages emerge from this config:
+
+- **Admission** comes from `scoringPolicy: queueDepth`. Under the default
+  stabilized band (enter `0.85` / exit `0.70`), a local provider whose queue
+  crosses the enter threshold becomes `existing_only` and stops taking new
+  traffic.
+- **Soft burst → hard fallback** is group fallback: the overflow provider
+  (`backendKind: api_provider`) sits in its own group by backend class, so it
+  only serves new traffic once *every* local provider is `existing_only`.
+  Metric-less elastic providers stay admissible, so overflow is always ready.
+- **Local rebalance first** — set `placementPolicy.strategy: pressureWeighted`
+  with `pressureWeighted.signal: queueDepth` (matching `scoringPolicy`) to shift
+  share among healthy locals by live pressure before any overflow is used.
+
 ---
 
 # User story: pressure changes placement without overriding admission
@@ -615,6 +677,54 @@ Request: may continue under soft policy
 ```
 
 A separate policy can choose hard enforcement where required.
+
+### Configuration
+
+Soft governance is the `token_rate_limit` filter on the consumer gateway, keyed
+by trusted identity and independent of routing:
+
+```yaml
+- filter: token_rate_limit
+  enforcement: soft          # soft = serve over-budget requests (HTTP 200) and flag
+                             # them; never 429. Use "hard" to deny on exhaustion.
+                             # This toggle does not reset ledger usage.
+  key:
+    principal:
+      source: metadata       # trusted identity, not a client header
+      name: identity.user_id
+      onMissing: reject
+    model:
+      source: header
+      name: x-model
+      onMissing: reject
+  reservationTimeout: 2m
+  rules:
+    - name: alice
+      match:
+        metadata:
+          identity.user_id: alice
+      estimation:
+        strategy: fixed      # reserve an estimate up front, reconcile actual usage after
+        tokens: 5
+      token_budgets:
+        - window: 1m         # sliding window
+          capacity: 60
+    - name: default
+      estimation:
+        strategy: fixed
+        tokens: 5
+      token_budgets:
+        - window: 10m
+          capacity: 5000
+```
+
+Over-budget requests under `enforcement: soft` are served and marked
+`over_allocation` (via an `x-ratelimit-governance` response header) rather than
+rejected. Because this filter runs before `intelligent_route` and uses shared
+ledger state, quota stays continuous as traffic moves across gateways and
+providers — a routing change never resets the ledger, and a token-policy change
+never resets routing. A complete, applyable version is in
+[`example-manifests/05-consumer-praxis-soft-quota.yaml`](./example-manifests/05-consumer-praxis-soft-quota.yaml).
 
 Routing changes do not reset the token ledger. Token-policy changes do not reset
 routing state.
