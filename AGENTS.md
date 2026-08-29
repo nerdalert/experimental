@@ -3,6 +3,10 @@
 This file provides guidance to coding agents when
 working with code in this repository.
 
+AI tools may assist with implementation, but do not add Claude or another AI
+tool as a commit collaborator, co-author, or signatory. Commit sign-off belongs
+to the human contributor responsible for the change.
+
 ## Project
 
 Experimental workspace for early-stage [Praxis]
@@ -38,8 +42,10 @@ cargo test -p <crate> -- test_name
 
 ## Architecture
 
-Empty experimental workspace. Crates are added
-under `crates/` as experiments mature. Each crate
+The workspace holds `crates/experimental-probe`, a
+minimal probe crate that keeps the quality gates
+verifiable against real code. Additional crates are
+added under `crates/` as experiments mature. Each crate
 inherits workspace lints, dependencies, and
 profiles from the root `Cargo.toml`.
 

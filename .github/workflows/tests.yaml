@@ -37,10 +37,13 @@ jobs:
 
   lint:
     runs-on: ubuntu-24.04
+    timeout-minutes: 45
     permissions:
       contents: read
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
 
       - name: Detect workspace members
         id: ws
@@ -77,10 +80,13 @@ jobs:
 
   test:
     runs-on: ubuntu-24.04
+    timeout-minutes: 45
     permissions:
       contents: read
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
 
       - name: Detect workspace members
         id: ws
@@ -109,6 +115,7 @@ jobs:
 
   meta-lint:
     runs-on: ubuntu-24.04
+    timeout-minutes: 45
     permissions:
       contents: read
     env:
@@ -118,6 +125,8 @@ jobs:
       LYCHEE_VERSION: v0.24.2
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
 
       - name: Install lint tools
         run: |
@@ -152,10 +161,13 @@ jobs:
 
   feature-matrix:
     runs-on: ubuntu-24.04
+    timeout-minutes: 45
     permissions:
       contents: read
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
 
       - name: Detect workspace members
         id: ws
