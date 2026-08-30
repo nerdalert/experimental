@@ -330,7 +330,60 @@ credentialed route; a 401 would incorrectly mark a usable provider unhealthy.
 | [`08-regional-local-pools.yaml`](./example-manifests/08-regional-local-pools.yaml) | Four simulator ConfigMaps, Deployments, and Services. |
 | [`09-regional-inference-providers.yaml`](./example-manifests/09-regional-inference-providers.yaml) | Four local providers with health and queue metrics. |
 | [`10-openai-overflow-providers.yaml`](./example-manifests/10-openai-overflow-providers.yaml) | Two external overflow providers. |
+| [`11-azure-overflow-providers.yaml`](./example-manifests/11-azure-overflow-providers.yaml) | Secret-backed Azure OpenAI overflow provider templates. |
+| [`12-azure-provider-gateways.yaml`](./example-manifests/12-azure-provider-gateways.yaml) | Azure provider gateway templates with mTLS, Entra token injection, sealed routing, and upstream authority/SNI. |
+| [`13-consumer-east-praxis.yaml`](./example-manifests/13-consumer-east-praxis.yaml) | Declarative east consumer ConfigMap with local, OpenAI, and dedicated Azure provider hops. |
+| [`14-consumer-west-praxis.yaml`](./example-manifests/14-consumer-west-praxis.yaml) | Declarative west consumer ConfigMap with local, OpenAI, and dedicated Azure provider hops. |
+
+### Azure OpenAI overflow (optional)
+
+Azure is an additional external provider class, not another local Grid site.
+The Azure gateway obtains an Entra bearer token server-side with the `azure_ad`
+filter, then sends the OpenAI-compatible request to
+`/openai/v1/chat/completions`. The Azure resource hostname is used for both
+HTTP authority and TLS SNI. Grid only publishes the provider identity,
+capability, health, and overflow-group membership; it does not acquire Azure
+tokens or call Azure on the request path.
+
+The `11-azure-overflow-providers.yaml` file contains only placeholders. Create
+the `azure-openai-client-secret` Secret from a protected secret manager and
+configure the gateway with `AZURE_CLIENT_SECRET` through a Secret-backed
+environment reference. Never put the client secret in a ConfigMap, overlay,
+README, evidence, or browser-visible data.
+
+The Azure candidates must share the same accepted overflow selection group as
+the OpenAI candidates and use `roundRobin` within that group. Before applying
+the provider resources, validate the direct Azure deployment independently;
+then validate the provider gateway path and only afterward add the candidates
+to the Grid overlay. The current qualified demo remains OpenAI-only until the
+Azure gateway route and its secret wiring are deployed and measured.
+
+For a reusable provider-boundary smoke test after deployment, run
+`scripts/validate-azure-provider.sh` from this directory. It reads the live
+candidate ID and optional sealed overlay revision from the selected Azure
+ConfigMap, mounts the existing `gateway-tls` Secret, and sends one one-token
+request. Azure credentials remain server-side in the gateway Secret. The script
+requires HTTP 200 plus `x-ai-demo-provider-gateway: azure-east|azure-west` and
+`x-ai-inference-provider: azure-upstream`; it does not replace the qualifying
+consumer-to-Grid overflow test.
+
+Before enabling Azure candidates in the consumer overlay, run
+`scripts/configure-azure-consumer-routes.sh` to validate the generated change.
+It adds `azure-east` and `azure-west` to `provider_hop_clusters` and maps them
+to the dedicated Azure provider-gateway Services. The declarative source for
+the cold deployment is `13-consumer-east-praxis.yaml` and
+`14-consumer-west-praxis.yaml`. The endpoints are
+`azure-east.grid-system.svc.cluster.local:8443` and
+`azure-west.grid-system.svc.cluster.local:8443`; the SNI values use the
+certificate-covered east/west identities. The script is dry-run by default and
+checks that local/OpenAI routes are unchanged and that a second render is
+identical. Set `APPLY_AZURE_CONSUMER_ROUTES=1` only after reviewing that
+validation, then roll the consumers and run the provider-boundary probe and the
+consumer-to-Grid test. Azure has been validated through the consumer path;
+provider-attributed Azure 429 responses remain subject to the external Azure
+resource's own quota and rate limits.
 | [`10-observability-jaeger.yaml`](./example-manifests/10-observability-jaeger.yaml) | Optional OTLP-compatible Jaeger deployment. |
+| [`scripts/validate-azure-provider.sh`](./scripts/validate-azure-provider.sh) | One-token provider-boundary smoke test that derives the live candidate and sealed revision. |
 | [`configure-otel.sh`](./scripts/configure-otel.sh) | Configures gateway OTLP export. |
 | [`configure-ui-traces.sh`](./scripts/configure-ui-traces.sh) | Connects the UI to trace queries. |
 
@@ -372,6 +425,59 @@ kubectl apply -f example-manifests/10-observability-jaeger.yaml
 ./scripts/configure-otel.sh
 ./scripts/configure-ui-traces.sh
 ```
+
+The tracing UI needs two distinct Jaeger addresses:
+
+```text
+JAEGER_URL=http://jaeger-query.grid-system.svc.cluster.local:16686
+JAEGER_UI_URL=https://<jaeger-public-route>
+TRACING_UI_TOKEN_TRACE_LOOKUP=true
+```
+
+`JAEGER_URL` is the in-cluster query endpoint used by the UI server.
+`JAEGER_UI_URL` is the browser-reachable Route used for trace links. Do not set
+the browser URL to the cluster-local Service address, and do not allow the UI
+server to fall back to `http://localhost:16686` in a Kubernetes deployment.
+
+For this OpenShift environment, obtain the public URL rather than hard-coding a
+cluster-specific hostname:
+
+```bash
+export JAEGER_URL=http://jaeger-query.grid-system.svc.cluster.local:16686
+export JAEGER_UI_URL="https://$(kubectl -n grid-system get route jaeger-query-public -o jsonpath='{.spec.host}')"
+./scripts/configure-ui-traces.sh
+```
+
+The checked-in UI Deployment should declare both variables so a fresh
+declarative deployment does not depend on running the helper afterward. When
+updating them, preserve the rest of the container definition. After rollout,
+verify the UI status API reports `jaeger_reachable: true`, its server-side
+query URL is the cluster-local Service, and generated trace links use the
+public Route.
+
+Token trace lookup injects a unique W3C trace context into each request created
+by the UI and queries Jaeger only for that exact trace ID. The lookup is
+asynchronous and bounded; a request row remains explicitly unindexed when the
+trace does not arrive. Do not correlate a row with the latest trace or by
+timestamp alone.
+
+If the routing UI login is enabled, create its credentials as a Secret before
+applying the UI Deployment. Supply values interactively so the password is not
+stored in the README, a manifest, or shell history:
+
+```bash
+read -r -p "UI username: " TRACING_UI_AUTH_USERNAME
+read -r -s -p "UI password: " TRACING_UI_AUTH_PASSWORD
+printf '\n'
+kubectl -n praxis-tracing-cloud-burst create secret generic praxis-tracing-cloud-burst-ui-auth --from-literal=username="$TRACING_UI_AUTH_USERNAME" --from-literal=password="$TRACING_UI_AUTH_PASSWORD" --dry-run=client -o yaml | kubectl apply -f -
+unset TRACING_UI_AUTH_USERNAME TRACING_UI_AUTH_PASSWORD
+```
+
+The UI Deployment must read `TRACING_UI_AUTH_USERNAME` and
+`TRACING_UI_AUTH_PASSWORD` from the `username` and `password` keys in this
+Secret using `valueFrom.secretKeyRef`. Do not place either value directly in
+the Deployment. This Secret is separate from application quota credentials,
+OpenAI credentials, and Azure credentials.
 
 Review the scripts first; they assume names from this development environment.
 
