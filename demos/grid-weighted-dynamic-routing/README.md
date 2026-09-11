@@ -15,6 +15,11 @@ distribution.
 > Use a Grid checkout containing that work; a released image does not yet
 > provide the dynamic policy.
 
+## Recorded Demo
+
+<!-- markdownlint-disable-next-line MD034 -->
+https://github.com/user-attachments/assets/32fc68cc-e866-4a8b-a486-3f621364dd7e
+
 ## User stories
 
 - **Platform engineer:** Use configured capacity and live pool pressure to
