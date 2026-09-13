@@ -13,9 +13,18 @@ target
 # Contains mutation testing data
 **/mutants.out*/
 
+# Video recordings and demo output
+*.mp4
+*.avi
+*.webm
+
 # RustRover
 #  JetBrains specific template is maintained in a separate JetBrains.gitignore that can
 #  be found at https://github.com/github/gitignore/blob/main/Global/JetBrains.gitignore
 #  and can be added to the global gitignore or merged into this file.  For a more nuclear
 #  option (not recommended) you can uncomment the following to ignore the entire idea folder.
 #.idea/
+demos/*/.forge/
+
+# Benchmark output (regenerate with scripts/benchmark.sh)
+demos/otel-benchmark/results/
