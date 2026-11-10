@@ -8,6 +8,7 @@ Demonstrations of experimental Praxis features live in this directory.
 - [Praxis Grid - Intelligent Overflow](grid-cloud-burst/README.md)
 - [Per-app token budgets with token_rate_limit](token-rate-limit-per-app-budgets/README.md)
 - [Praxis Grid - Static and dynamic weighted routing](grid-weighted-dynamic-routing/README.md)
+- [Praxis Grid × Dynamo signal routing](grid-dynamo-signals/README.md)
 - [OTel observability benchmark](otel-benchmark/README.md)
 - [Mixture-of-Models routing with Switchyard](switchyard-route/README.md)
 - [Switchyard + PriceTag USD-budget exhaustion](switchyard-pricetag/README.md)
